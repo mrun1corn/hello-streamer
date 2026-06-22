@@ -346,6 +346,12 @@ function startStream(url){
   vid.classList.remove('on');
   vid.src='';
 
+  if (url.startsWith('http://') && window.location.protocol === 'https:') {
+    hideSpin();
+    showErr('Insecure HTTP stream blocked on HTTPS site. Your browser blocks HTTP video streams on HTTPS pages to prevent insecurity. Please run the site over HTTP (e.g. localhost) or allow insecure content in your browser settings for this site.', true);
+    return;
+  }
+
   if(Hls.isSupported()){
     hls = new Hls({enableWorker:true,lowLatencyMode:true,fragLoadingTimeOut:12000});
     hls.loadSource(url);
@@ -375,7 +381,11 @@ function nextChannel(){
 /* ── UI STATES ──── */
 function showSpin(){ document.getElementById('spin').classList.add('on') }
 function hideSpin(){ document.getElementById('spin').classList.remove('on') }
-function showErr(msg){ document.getElementById('err-msg').textContent=msg+' — Stream may be offline or geo-restricted. Try another channel.'; document.getElementById('err').classList.add('on') }
+function showErr(msg, isDirectMessage = false){
+  const suffix = isDirectMessage ? '' : ' — Stream may be offline or geo-restricted. Try another channel.';
+  document.getElementById('err-msg').textContent = msg + suffix;
+  document.getElementById('err').classList.add('on');
+}
 function hideErr(){ document.getElementById('err').classList.remove('on') }
 
 /* ── SIDEBAR MOBILE ──── */

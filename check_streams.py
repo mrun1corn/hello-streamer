@@ -14,11 +14,19 @@ SOURCE_CHANNELS_JS = 0
 SOURCE_USER_PLAYLIST = 1
 SOURCE_IPTV_ORG_BD = 2
 SOURCE_IPTV_ORG_IN = 3
+SOURCE_LUPAEL_RUNNING = 4
+SOURCE_LUPAEL_PLAY = 5
+SOURCE_LUPAEL_WORLD = 6
+SOURCE_ANIK_BDIXI = 7
 
 PLAYLIST_SOURCES = {
     "user_playlist": (SOURCE_USER_PLAYLIST, "https://github.com/abusaeeidx/Mrgify-BDIX-IPTV/raw/main/playlist.m3u"),
-    "iptv_org_bd": (SOURCE_IPTV_ORG_BD, "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/bd.m3u"),
-    "iptv_org_in": (SOURCE_IPTV_ORG_IN, "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/in.m3u")
+    "iptv_org_bd": (SOURCE_IPTV_ORG_BD, "https://iptv-org.github.io/iptv/countries/bd.m3u"),
+    "iptv_org_in": (SOURCE_IPTV_ORG_IN, "https://iptv-org.github.io/iptv/countries/in.m3u"),
+    "lupael_running": (SOURCE_LUPAEL_RUNNING, "https://raw.githubusercontent.com/lupael/IPTV/master/running.m3u"),
+    "lupael_play": (SOURCE_LUPAEL_PLAY, "https://raw.githubusercontent.com/lupael/IPTV/master/play.m3u"),
+    "lupael_world": (SOURCE_LUPAEL_WORLD, "https://raw.githubusercontent.com/lupael/IPTV/master/world.m3u"),
+    "anik_bdixi": (SOURCE_ANIK_BDIXI, "https://raw.githubusercontent.com/aniksarakash/IPTV/master/BDIXI_IPTV.m3u")
 }
 
 def parse_existing_channels_js(filepath):
@@ -169,21 +177,23 @@ def categorize(channel_name, source_group):
         return "Music"
 
     # Indian Bangla
-    if any(x in name for x in ["jalsha", "zee bangla", "sony aath", "colors bangla", "ruposhi", "aakash aath", "star jalsha"]):
+    if any(x in name for x in ["jalsha", "zee bangla", "sony aath", "colors bangla", "ruposhi", "aakash aath", "star jalsha", "dd bangla"]):
         return "Indian Bangla"
-    if "indian bangla" in sg or "west bengal" in sg or "bangla india" in sg:
+    if "bangla" in name and any(x in name for x in ["zee", "star", "colors", "sony", "dd", "etv"]):
+        return "Indian Bangla"
+    if any(x in sg for x in ["indian bangla", "west bengal", "bangla india", "bengali"]):
         return "Indian Bangla"
 
     # Indian
-    if any(x in name for x in ["ndtv", "zee tv", "sony tv", "colors hd", "star plus"]):
+    if any(x in name for x in ["ndtv", "zee", "sony", "colors", "star gold", "star plus", "star bharat", "star movies", "star world", "dangal", "shemaroo", "rishtey", "anmol", "big magic", "dabaang", "dd national", "dd india", "dd retro", "dd bharati", "sun tv", "etv", "vijay", "asianet", "sab tv", "bindass", "zoom"]):
         return "Indian"
-    if "india" in sg or "hindi" in sg:
+    if any(x in sg for x in ["india", "hindi", "ind.", "ind ", "tamil", "telugu", "malayalam", "kannada", "punjabi", "marathi", "bhojpuri", "gujarati", "urdu"]):
         return "Indian"
 
     # Bangladesh
-    if any(x in name for x in ["btv", "ntv", "channel i", "atn bangla", "banglavision", "deepto", "rtv", "maasranga", "asian tv", "ekhone", "deshi", "desh tv"]):
+    if any(x in name for x in ["bangla", "btv", "ntv", "channel i", "atn bangla", "banglavision", "deepto", "rtv", "maasranga", "asian tv", "ekhone", "deshi", "desh tv"]):
         return "Bangladesh"
-    if "bangladesh" in sg or "bangla" in sg or "akash go" in sg or "bdix" in sg:
+    if any(x in sg for x in ["bangladesh", "bangla", "akash go", "bdix"]):
         return "Bangladesh"
 
     # International
@@ -192,10 +202,8 @@ def categorize(channel_name, source_group):
     if "international" in sg or "english" in sg or "world" in sg:
         return "International"
 
-    # Default based on name
     return "International"
-
-def check_stream(channel, timeout=5):
+def check_stream(channel, timeout=3):
     """
     Checks if a stream URL is working.
     Returns (channel, is_working, error_message)
@@ -248,11 +256,17 @@ def main():
                 content = response.read().decode('utf-8', errors='ignore')
             
             playlist_channels = parse_m3u(content, name, priority)
-            candidate_channels.extend(playlist_channels)
-            print(f"Parsed {len(playlist_channels)} channels from {name}")
+            # Filter out channels categorized as "International" from remote playlists
+            # to focus on the target categories (BD, Indian, Sports, News, etc.)
+            filtered_channels = []
+            for c in playlist_channels:
+                grp = categorize(c["name"], c["group"])
+                if grp != "International":
+                    filtered_channels.append(c)
+            candidate_channels.extend(filtered_channels)
+            print(f"Parsed {len(playlist_channels)} channels from {name} (filtered to {len(filtered_channels)} target channels)")
         except Exception as e:
             print(f"Error fetching {name}: {e}")
-
     total_candidates = len(candidate_channels)
     print(f"\nTotal candidate channels to check: {total_candidates}")
 
@@ -273,7 +287,7 @@ def main():
     checked_count = 0
 
     print("\nValidating streams in parallel (this may take a minute)...")
-    with ThreadPoolExecutor(max_workers=30) as executor:
+    with ThreadPoolExecutor(max_workers=80) as executor:
         futures = [executor.submit(check_stream, c) for c in unique_url_candidates]
         
         for future in as_completed(futures):
