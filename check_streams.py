@@ -1,5 +1,6 @@
 import re
 import ssl
+import json
 import urllib.request
 import urllib.error
 import socket
@@ -10,69 +11,108 @@ import os
 ssl_context = ssl.create_default_context()
 
 # Source priorities (lower is higher priority)
-SOURCE_CHANNELS_JS = 0
+SOURCE_CHANNELS_JSON = 0
 SOURCE_USER_PLAYLIST = 1
-SOURCE_IPTV_ORG_BD = 2
-SOURCE_IPTV_ORG_IN = 3
-SOURCE_LUPAEL_RUNNING = 4
-SOURCE_LUPAEL_PLAY = 5
-SOURCE_LUPAEL_WORLD = 6
+SOURCE_IPTV_ORG_BENGALI = 2
+SOURCE_IPTV_ORG_SPORTS = 3
+SOURCE_IPTV_ORG_BD = 4
+SOURCE_IPTV_ORG_IN = 5
+SOURCE_FREE_TV = 6
 SOURCE_ANIK_BDIXI = 7
 
 PLAYLIST_SOURCES = {
     "user_playlist": (SOURCE_USER_PLAYLIST, "https://github.com/abusaeeidx/Mrgify-BDIX-IPTV/raw/main/playlist.m3u"),
+    "iptv_org_bengali": (SOURCE_IPTV_ORG_BENGALI, "https://iptv-org.github.io/iptv/languages/ben.m3u"),
+    "iptv_org_sports": (SOURCE_IPTV_ORG_SPORTS, "https://iptv-org.github.io/iptv/categories/sports.m3u"),
     "iptv_org_bd": (SOURCE_IPTV_ORG_BD, "https://iptv-org.github.io/iptv/countries/bd.m3u"),
     "iptv_org_in": (SOURCE_IPTV_ORG_IN, "https://iptv-org.github.io/iptv/countries/in.m3u"),
-    "lupael_running": (SOURCE_LUPAEL_RUNNING, "https://raw.githubusercontent.com/lupael/IPTV/master/running.m3u"),
-    "lupael_play": (SOURCE_LUPAEL_PLAY, "https://raw.githubusercontent.com/lupael/IPTV/master/play.m3u"),
-    "lupael_world": (SOURCE_LUPAEL_WORLD, "https://raw.githubusercontent.com/lupael/IPTV/master/world.m3u"),
+    "free_tv": (SOURCE_FREE_TV, "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8"),
     "anik_bdixi": (SOURCE_ANIK_BDIXI, "https://raw.githubusercontent.com/aniksarakash/IPTV/master/BDIXI_IPTV.m3u")
 }
 
-def parse_existing_channels_js(filepath):
+DEFAULT_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+    'Origin': 'https://hello-streamer.vercel.app',
+    'Referer': 'https://hello-streamer.vercel.app/'
+}
+
+def load_existing_channels(json_path, js_path):
     """
-    Parses channels.js and extracts existing channels.
+    Loads existing channels from channels.json if available, or falls back to channels.js.
     """
     channels = []
-    if not os.path.exists(filepath):
-        print(f"channels.js not found at {filepath}. Starting with empty list.")
-        return channels
-
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        # Find array contents
-        match = re.search(r'const\s+CHANNELS\s*=\s*\[(.*?)\]\s*;', content, re.DOTALL)
-        if not match:
+    
+    # 1. Try loading from channels.json
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    for item in data:
+                        name = item.get("name", "").strip()
+                        url = item.get("url", "").strip()
+                        if name and url:
+                            channels.append({
+                                "name": name,
+                                "url": url,
+                                "logo": item.get("logo", "").strip(),
+                                "group": item.get("group", "").strip(),
+                                "backups": item.get("backups", []),
+                                "source_priority": SOURCE_CHANNELS_JSON,
+                                "source": "channels.json"
+                            })
+                            # Also include existing backups as candidate streams
+                            for b_url in item.get("backups", []):
+                                if b_url and b_url != url:
+                                    channels.append({
+                                        "name": name,
+                                        "url": b_url.strip(),
+                                        "logo": item.get("logo", "").strip(),
+                                        "group": item.get("group", "").strip(),
+                                        "backups": [],
+                                        "source_priority": SOURCE_CHANNELS_JSON + 0.5,
+                                        "source": "channels.json-backup"
+                                    })
+            print(f"Loaded {len(channels)} candidate entries from existing {json_path}")
             return channels
+        except Exception as e:
+            print(f"Error loading {json_path}: {e}")
 
-        array_content = match.group(1)
-        obj_matches = re.findall(r'\{\s*(.*?)\s*\}', array_content, re.DOTALL)
+    # 2. Fallback to channels.js parsing
+    if os.path.exists(js_path):
+        try:
+            with open(js_path, 'r', encoding='utf-8') as f:
+                content = f.read()
 
-        for obj_str in obj_matches:
-            def get_field(field_name):
-                # Matches: key: "value" or key:'value' or key: `value`
-                f_match = re.search(rf'{field_name}\s*:\s*["\'`]?([^"\'`\n,]+)["\'`]?', obj_str)
-                return f_match.group(1).strip() if f_match else ""
+            match = re.search(r'const\s+CHANNELS\s*=\s*(\[.*?\])\s*;', content, re.DOTALL)
+            if match:
+                array_str = match.group(1)
+                # Parse objects using regex that handles quotes and commas in fields accurately
+                obj_matches = re.findall(r'\{\s*(.*?)\s*\}', array_str, re.DOTALL)
+                for obj_str in obj_matches:
+                    def get_field(field_name):
+                        m = re.search(rf'{field_name}\s*:\s*["\'](.*?)["\'](?:\s*,|\s*$)', obj_str)
+                        return m.group(1).strip() if m else ""
 
-            name = get_field("name")
-            url = get_field("url")
-            logo = get_field("logo")
-            group = get_field("group")
+                    name = get_field("name")
+                    url = get_field("url")
+                    logo = get_field("logo")
+                    group = get_field("group")
 
-            if name and url:
-                channels.append({
-                    "name": name,
-                    "url": url,
-                    "logo": logo,
-                    "group": group,
-                    "source_priority": SOURCE_CHANNELS_JS,
-                    "source": "channels.js"
-                })
-        print(f"Parsed {len(channels)} channels from existing channels.js")
-    except Exception as e:
-        print(f"Error parsing existing channels.js: {e}")
+                    if name and url:
+                        channels.append({
+                            "name": name,
+                            "url": url,
+                            "logo": logo,
+                            "group": group,
+                            "backups": [],
+                            "source_priority": SOURCE_CHANNELS_JSON,
+                            "source": "channels.js"
+                        })
+            print(f"Parsed {len(channels)} channels from existing {js_path}")
+        except Exception as e:
+            print(f"Error parsing existing {js_path}: {e}")
     return channels
 
 def parse_m3u(m3u_content, source_name, priority):
@@ -89,12 +129,9 @@ def parse_m3u(m3u_content, source_name, priority):
             continue
         if line.startswith("#EXTINF"):
             current_channel = {}
-            # Try to extract tvg-logo
             logo_match = re.search(r'tvg-logo=["\'](.*?)["\']', line)
-            # Try to extract group-title
             group_match = re.search(r'group-title=["\'](.*?)["\']', line)
             
-            # The channel name is after the last comma
             comma_idx = line.rfind(',')
             name = line[comma_idx+1:].strip() if comma_idx != -1 else ""
 
@@ -106,19 +143,20 @@ def parse_m3u(m3u_content, source_name, priority):
         else:
             if current_channel is not None:
                 current_channel["url"] = line
+                current_channel["backups"] = []
                 current_channel["source_priority"] = priority
                 current_channel["source"] = source_name
                 if current_channel["name"] and current_channel["url"]:
                     channels.append(current_channel)
                 current_channel = None
             else:
-                # URL alone
                 url_name = line.split('/')[-1].split('.')[0]
                 channels.append({
                     "name": url_name,
                     "url": line,
                     "logo": "",
                     "group": "",
+                    "backups": [],
                     "source_priority": priority,
                     "source": source_name
                 })
@@ -129,10 +167,10 @@ def normalize_name(name):
     Normalizes channel names to facilitate deduplication.
     """
     n = name.lower().strip()
-    # Remove bracketed content like (backup), [SD], etc.
+    # Remove bracketed content like (backup), [SD], (720p), etc.
     n = re.sub(r'[\(\[\{].*?[\)\]\}]', '', n)
-    # Remove common suffixes/words
-    n = re.sub(r'\b(hd|sd|fhd|uhd|4k|tv|live|bd|stream|temporary|backup|online|asia|india|uk|usa|bangla)\b', '', n)
+    # Remove common suffixes/qualifiers
+    n = re.sub(r'\b(hd|sd|fhd|uhd|4k|tv|live|bd|stream|temporary|backup|online|asia|india|uk|usa|bangla|not\s+24\/7|geo-blocked)\b', '', n)
     # Keep alphanumeric and whitespace
     n = re.sub(r'[^a-z0-9\s]', '', n)
     # Collapse whitespace
@@ -203,61 +241,102 @@ def categorize(channel_name, source_group):
         return "International"
 
     return "International"
-def check_stream(channel, timeout=3):
+
+def probe_url(url, timeout=4):
     """
-    Checks if a stream URL is working.
-    Returns (channel, is_working, error_message)
+    Probes a specific URL for valid HLS/media content.
+    Returns (is_working, error_msg, final_url)
     """
-    url = channel["url"]
     try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-        )
+        req = urllib.request.Request(url, headers=DEFAULT_HEADERS)
         with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as response:
             code = response.getcode()
-            if code == 200:
-                # Read first 1024 bytes to check for real stream contents (HLS headers or binary TS data)
-                head = response.read(1024)
-                if len(head) > 0:
-                    return channel, True, "OK"
-                else:
-                    return channel, False, "Empty Response"
-            else:
-                return channel, False, f"HTTP {code}"
+            if code != 200:
+                return False, f"HTTP {code}", url
+            
+            # Read first 2048 bytes to inspect header
+            head = response.read(2048)
+            if not head:
+                return False, "Empty Response", url
+
+            # Check for HTML error pages (soft-200)
+            head_lower = head[:500].lower()
+            if b"<!doctype html" in head_lower or b"<html" in head_lower or b"<head" in head_lower:
+                return False, "Invalid Payload (HTML Error Page)", url
+
+            # Valid HLS manifest
+            if b"#EXTM3U" in head:
+                return True, "OK (HLS)", url
+
+            # Valid MPEG-TS binary stream (0x47 sync byte)
+            if len(head) >= 188 and head[0] == 0x47:
+                return True, "OK (TS)", url
+
+            # Other media stream formats
+            if b"ftyp" in head or b"moov" in head or b"OggS" in head:
+                return True, "OK (Media)", url
+
+            # Fallback check for text manifests without strict #EXTM3U at byte 0
+            if b"#EXTINF" in head or b"#EXT-X-" in head:
+                return True, "OK (HLS Chunk)", url
+
+            return False, "Unrecognized Stream Format", url
     except urllib.error.HTTPError as e:
-        return channel, False, f"HTTP {e.code}"
+        return False, f"HTTP {e.code}", url
     except urllib.error.URLError as e:
-        return channel, False, f"URL Error: {e.reason}"
+        return False, f"URL Error: {e.reason}", url
     except socket.timeout:
-        return channel, False, "Timeout"
+        return False, "Timeout", url
     except Exception as e:
-        return channel, False, f"Error: {str(e)}"
+        return False, f"Error: {str(e)}", url
+
+def check_stream(channel, timeout=4):
+    """
+    Checks if a channel stream URL is working.
+    Attempts HTTPS upgrade automatically if the stream is HTTP.
+    Returns (channel, is_working, error_message)
+    """
+    original_url = channel["url"]
+    
+    # 1. If URL is HTTP, try upgrading to HTTPS first to avoid mixed-content blocks
+    if original_url.startswith("http://"):
+        https_url = "https://" + original_url[7:]
+        ok, msg, final_url = probe_url(https_url, timeout=timeout)
+        if ok:
+            channel_copy = dict(channel)
+            channel_copy["url"] = final_url
+            return channel_copy, True, "OK (Upgraded to HTTPS)"
+    
+    # 2. Probe the configured URL
+    ok, msg, final_url = probe_url(original_url, timeout=timeout)
+    if ok:
+        channel_copy = dict(channel)
+        channel_copy["url"] = final_url
+        return channel_copy, True, msg
+    
+    return channel, False, msg
 
 def main():
     workspace_dir = os.path.dirname(os.path.abspath(__file__))
+    channels_json_path = os.path.join(workspace_dir, "channels.json")
     channels_js_path = os.path.join(workspace_dir, "channels.js")
 
     print("=========================================")
     print("      IPTV STREAM CHECKER & DEDUPLICATOR ")
     print("=========================================")
 
-    # 1. Gather existing channels from channels.js
-    candidate_channels = parse_existing_channels_js(channels_js_path)
+    # 1. Gather existing channels from channels.json / channels.js
+    candidate_channels = load_existing_channels(channels_json_path, channels_js_path)
 
     # 2. Gather channels from remote playlists
     for name, (priority, url) in PLAYLIST_SOURCES.items():
         print(f"Fetching remote playlist: {name}...")
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(url, headers=DEFAULT_HEADERS)
             with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
                 content = response.read().decode('utf-8', errors='ignore')
             
             playlist_channels = parse_m3u(content, name, priority)
-            # Filter out channels categorized as "International" from remote playlists
-            # to focus on the target categories (BD, Indian, Sports, News, etc.)
             filtered_channels = []
             for c in playlist_channels:
                 grp = categorize(c["name"], c["group"])
@@ -267,15 +346,16 @@ def main():
             print(f"Parsed {len(playlist_channels)} channels from {name} (filtered to {len(filtered_channels)} target channels)")
         except Exception as e:
             print(f"Error fetching {name}: {e}")
+            
     total_candidates = len(candidate_channels)
     print(f"\nTotal candidate channels to check: {total_candidates}")
 
-    # Deduplicate candidate list strictly by URL before checking to avoid wasting time testing identical streams
+    # Deduplicate candidate list strictly by URL before checking
     unique_url_candidates = []
     seen_urls = set()
     for c in candidate_channels:
         url = c["url"].strip()
-        if url not in seen_urls:
+        if url and url not in seen_urls:
             seen_urls.add(url)
             unique_url_candidates.append(c)
     
@@ -286,7 +366,7 @@ def main():
     broken_count = 0
     checked_count = 0
 
-    print("\nValidating streams in parallel (this may take a minute)...")
+    print("\nValidating streams in parallel with deep manifest inspection (80 workers)...")
     with ThreadPoolExecutor(max_workers=80) as executor:
         futures = [executor.submit(check_stream, c) for c in unique_url_candidates]
         
@@ -303,38 +383,44 @@ def main():
 
     print(f"\nStream checking complete. Found {len(working_channels)} working streams and {broken_count} broken/offline streams.")
 
-    # 4. Strict Deduplication by Normalized Channel Name
-    # We want exactly one working stream per channel name.
-    # We prioritize the source: channels.js (0) > user_playlist (1) > iptv_org_bd (2) > iptv_org_in (3)
+    # 4. Multi-Stream Deduplication & Backup Collection by Normalized Name
     final_channels = {}
-    duplicate_name_count = 0
-
+    
     for c in working_channels:
         norm_name = normalize_name(c["name"])
         if not norm_name:
             continue
         
-        # Categorize the channel into our official groups
         c["group"] = categorize(c["name"], c["group"])
+        url = c["url"].strip()
 
-        # Deduplication choice logic
         if norm_name in final_channels:
             existing = final_channels[norm_name]
-            # Replace if new one has higher priority (lower value is higher priority)
-            # or if they have same priority but the new name matches the normalized representation better
+            
+            # If candidate has higher priority, make it primary and push existing into backups
             if c["source_priority"] < existing["source_priority"]:
+                # Old primary becomes backup if different URL
+                if existing["url"] not in c.get("backups", []) and existing["url"] != url:
+                    c.setdefault("backups", []).append(existing["url"])
+                # Inherit any existing backups
+                for b_url in existing.get("backups", []):
+                    if b_url != url and b_url not in c["backups"] and len(c["backups"]) < 3:
+                        c["backups"].append(b_url)
                 final_channels[norm_name] = c
-                duplicate_name_count += 1
             else:
-                duplicate_name_count += 1
+                # Add candidate URL to existing channel's backups if unique (up to 3 backups)
+                existing.setdefault("backups", [])
+                if url != existing["url"] and url not in existing["backups"] and len(existing["backups"]) < 3:
+                    existing["backups"].append(url)
         else:
+            c.setdefault("backups", [])
             final_channels[norm_name] = c
 
     deduped_channels = list(final_channels.values())
-    print(f"Name deduplication complete. Kept {len(deduped_channels)} channels (filtered out {duplicate_name_count} duplicates/backups).")
+    total_backups = sum(len(c.get("backups", [])) for c in deduped_channels)
+    print(f"Deduplication complete: {len(deduped_channels)} channels retained with {total_backups} total backup failover streams.")
 
-    # 5. Output and format channels.js
-    # Sort groups logically, and channels alphabetically within groups
+    # 5. Sort channels logically by group and alphabetically
     group_order = ["Bangladesh", "Sports", "Indian Bangla", "Indian", "News", "International", "Religious", "Kids", "Music"]
     
     def get_sort_key(c):
@@ -344,25 +430,42 @@ def main():
 
     deduped_channels.sort(key=get_sort_key)
 
-    # Re-assign IDs
+    # Re-assign IDs and sanitize fields
+    clean_channels = []
     for idx, c in enumerate(deduped_channels):
-        c["id"] = idx + 1
+        clean_channels.append({
+            "id": idx + 1,
+            "name": c["name"].strip(),
+            "group": c["group"].strip(),
+            "logo": c.get("logo", "").strip(),
+            "url": c["url"].strip(),
+            "backups": [b.strip() for b in c.get("backups", []) if b.strip() and b.strip() != c["url"].strip()]
+        })
 
-    # Format channels.js content beautifully
+    # 6. Save channels.json (Primary Modern Store)
+    try:
+        with open(channels_json_path, "w", encoding="utf-8") as f:
+            json.dump(clean_channels, f, indent=2, ensure_ascii=False)
+        print(f"\n[OK] Saved {len(clean_channels)} channels to {channels_json_path}")
+    except Exception as e:
+        print(f"Error saving to channels.json: {e}")
+
+    # 7. Save channels.js (Backwards Compatible Store)
     js_content = "const CHANNELS = [\n"
     last_group = None
     
-    for c in deduped_channels:
+    for c in clean_channels:
         if c["group"] != last_group:
             last_group = c["group"]
             js_content += f"\n  // ── {last_group.upper()} " + "─"*(42 - len(last_group)) + "\n"
 
-        name_esc = c["name"].replace('"', '\\"')
-        group_esc = c["group"].replace('"', '\\"')
-        logo_esc = c["logo"].replace('"', '\\"')
-        url_esc = c["url"].replace('"', '\\"')
+        name_esc = c["name"].replace('\\', '\\\\').replace('"', '\\"')
+        group_esc = c["group"].replace('\\', '\\\\').replace('"', '\\"')
+        logo_esc = c["logo"].replace('\\', '\\\\').replace('"', '\\"')
+        url_esc = c["url"].replace('\\', '\\\\').replace('"', '\\"')
+        backups_json = json.dumps(c["backups"])
 
-        js_content += f'  {{ id:{c["id"]:<3}, name:"{name_esc}", group:"{group_esc}", logo:"{logo_esc}", url:"{url_esc}" }},\n'
+        js_content += f'  {{ id:{c["id"]:<3}, name:"{name_esc}", group:"{group_esc}", logo:"{logo_esc}", url:"{url_esc}", backups:{backups_json} }},\n'
 
     js_content += "];\n\n"
     js_content += "const GROUPS = ['All', ...new Set(CHANNELS.map(c => c.group))];\n"
@@ -370,13 +473,13 @@ def main():
     try:
         with open(channels_js_path, "w", encoding="utf-8") as f:
             f.write(js_content)
-        print(f"\nSuccess! Saved {len(deduped_channels)} working, deduplicated channels into channels.js")
+        print(f"[OK] Saved {len(clean_channels)} channels to {channels_js_path}")
     except Exception as e:
         print(f"Error saving to channels.js: {e}")
 
     # Print breakdown by group
     group_counts = {}
-    for c in deduped_channels:
+    for c in clean_channels:
         group_counts[c["group"]] = group_counts.get(c["group"], 0) + 1
     
     print("\nChannel breakdown by group:")
@@ -384,7 +487,7 @@ def main():
         if group in group_counts:
             print(f" - {group}: {group_counts[group]} channels")
 
-    print("\nRun complete. Have a great day!")
+    print("\nRun complete.")
 
 if __name__ == "__main__":
     main()
