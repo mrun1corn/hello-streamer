@@ -133,7 +133,12 @@
     #np-group{font-size:11px;color:var(--muted2);flex-shrink:0}
     #np-stream-status{font-size:10px;color:var(--cyan);background:var(--cyan-dim);border:1px solid var(--cyan);padding:2px 6px;border-radius:4px;display:none;font-weight:600}
 
-    .np-actions{display:flex;align-items:center;gap:6px;margin-left:auto}
+    .np-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+    #quality-select{
+      background:var(--surface);border:1px solid var(--border2);color:var(--muted2);
+      font-size:11px;font-family:var(--fd);border-radius:6px;padding:4px 8px;outline:none;cursor:pointer;transition:all .18s;display:none
+    }
+    #quality-select:hover,#quality-select:focus{border-color:var(--cyan);color:var(--cyan)}
 
     /* video */
     #vwrap{flex:1;position:relative;background:#000;overflow:hidden}
@@ -231,6 +236,7 @@
       <div id="np-group"></div>
       <div id="np-stream-status"></div>
       <div class="np-actions">
+        <select id="quality-select" onchange="changeQuality(this.value)" title="Stream Quality"></select>
         <button id="np-fav-btn" class="icon-btn" onclick="toggleCurrentFav()" title="Favorite Channel" style="display:none">
           ⭐
         </button>
@@ -294,6 +300,8 @@ let currentBackupIdx = 0; // 0 = primary url, 1..N = backup index
 let currentStreamUrl = null;
 
 let hls = null;
+let lastMediaRecoveryTime = 0;
+let lastNetworkRecoveryTime = 0;
 let noiseRaf;
 let toastTimeout;
 
@@ -319,6 +327,7 @@ async function initData(){
   renderList();
   updateFooter();
   restoreVolume();
+  initMediaSessionHandlers();
 }
 
 /* ── NOISE EFFECT ──── */
@@ -521,6 +530,9 @@ function play(id, backupIndex = 0){
     showToast(`Attempting backup stream #${backupIndex} for ${ch.name}...`);
   }
 
+  // Update OS Media Session metadata
+  updateMediaSession(ch);
+
   startStream(currentStreamUrl);
 
   // Close mobile sidebar
@@ -529,6 +541,10 @@ function play(id, backupIndex = 0){
 
 function startStream(url){
   const vid = document.getElementById('vid');
+  const qualitySelect = document.getElementById('quality-select');
+  qualitySelect.style.display = 'none';
+  qualitySelect.innerHTML = '';
+
   if(hls){ hls.destroy(); hls = null; }
   vid.classList.remove('on');
   vid.src = '';
@@ -556,22 +572,55 @@ function startStream(url){
     hls = new Hls({
       enableWorker: true,
       lowLatencyMode: true,
+      backBufferLength: 60,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      liveSyncDurationCount: 3,
+      initialLiveManifestSize: 1,
       fragLoadingTimeOut: 12000,
       manifestLoadingTimeOut: 10000
     });
+    
     hls.loadSource(url);
     hls.attachMedia(vid);
     
-    hls.on(Hls.Events.MANIFEST_PARSED, ()=>{
+    hls.on(Hls.Events.MANIFEST_PARSED, (_, data)=>{
       vid.play().catch(()=>{});
       vid.classList.add('on');
       hideSpin();
+      populateQualityLevels(hls.levels);
     });
 
+    hls.on(Hls.Events.LEVEL_LOADED, ()=>{
+      if(hls && hls.levels && hls.levels.length > 1 && qualitySelect.children.length <= 1){
+        populateQualityLevels(hls.levels);
+      }
+    });
+
+    // Fatal error recovery with Context7 recommended rate-limiting
     hls.on(Hls.Events.ERROR, (_, data)=>{
       if(data.fatal){
-        console.warn('HLS Fatal Error:', data.type, data.details);
-        handleStreamFailure(data.details || 'HLS Error');
+        const now = Date.now();
+        switch(data.type){
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            if(now - lastMediaRecoveryTime > 3500){
+              lastMediaRecoveryTime = now;
+              console.log('Recovering from fatal media decode error via hls.recoverMediaError()...');
+              hls.recoverMediaError();
+              return;
+            }
+            break;
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            if(now - lastNetworkRecoveryTime > 4000){
+              lastNetworkRecoveryTime = now;
+              console.log('Recovering from network error via hls.startLoad()...');
+              hls.startLoad();
+              return;
+            }
+            break;
+        }
+        console.warn('HLS Fatal Error, triggering failover:', data.type, data.details);
+        handleStreamFailure(data.details || 'HLS Stream Error');
       }
     });
   } else if(vid.canPlayType('application/vnd.apple.mpegurl')){
@@ -596,6 +645,31 @@ function startStream(url){
     }).catch(err => {
       handleStreamFailure('Direct Stream Error');
     });
+  }
+}
+
+function populateQualityLevels(levels){
+  const qualitySelect = document.getElementById('quality-select');
+  if(!levels || levels.length <= 1){
+    qualitySelect.style.display = 'none';
+    return;
+  }
+
+  qualitySelect.innerHTML = '<option value="-1">Quality: Auto</option>';
+  levels.forEach((lvl, idx)=>{
+    const res = lvl.height ? `${lvl.height}p` : `${Math.round(lvl.bitrate / 1000)}k`;
+    const opt = document.createElement('option');
+    opt.value = idx;
+    opt.textContent = res;
+    qualitySelect.appendChild(opt);
+  });
+  qualitySelect.style.display = 'inline-block';
+}
+
+function changeQuality(levelIdx){
+  if(hls){
+    hls.currentLevel = parseInt(levelIdx, 10);
+    showToast(levelIdx === '-1' ? 'Quality set to Auto' : `Quality locked to level #${parseInt(levelIdx)+1}`);
   }
 }
 
@@ -659,6 +733,33 @@ function toggleFav(e, id){
 
 function toggleCurrentFav(){
   if(currentIdx !== -1) toggleFav(null, currentIdx);
+}
+
+/* ── MEDIA SESSION API ──── */
+function updateMediaSession(ch){
+  if('mediaSession' in navigator && ch){
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: ch.name,
+      artist: 'Hello Streamer • Live TV',
+      album: ch.group || 'Live Stream',
+      artwork: ch.logo ? [{ src: ch.logo, sizes: '512x512', type: 'image/png' }] : []
+    });
+  }
+}
+
+function initMediaSessionHandlers(){
+  if('mediaSession' in navigator){
+    navigator.mediaSession.setActionHandler('play', ()=>{
+      const vid = document.getElementById('vid');
+      if(vid.classList.contains('on')) vid.play();
+    });
+    navigator.mediaSession.setActionHandler('pause', ()=>{
+      const vid = document.getElementById('vid');
+      if(vid.classList.contains('on')) vid.pause();
+    });
+    navigator.mediaSession.setActionHandler('nexttrack', ()=> nextChannel());
+    navigator.mediaSession.setActionHandler('previoustrack', ()=> prevChannel());
+  }
 }
 
 /* ── UI FEEDBACK ──── */
