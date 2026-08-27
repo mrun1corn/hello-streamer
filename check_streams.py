@@ -17,11 +17,13 @@ SOURCE_IPTV_ORG_BENGALI = 2
 SOURCE_IPTV_ORG_SPORTS = 3
 SOURCE_IPTV_ORG_BD = 4
 SOURCE_IPTV_ORG_IN = 5
-SOURCE_FREE_TV = 6
-SOURCE_ANIK_BDIXI = 7
+SOURCE_IPTV_ORG_MOVIES = 6
+SOURCE_FREE_TV = 7
+SOURCE_ANIK_BDIXI = 8
 
 PLAYLIST_SOURCES = {
     "user_playlist": (SOURCE_USER_PLAYLIST, "https://github.com/abusaeeidx/Mrgify-BDIX-IPTV/raw/main/playlist.m3u"),
+    "iptv_org_movies": (SOURCE_IPTV_ORG_MOVIES, "https://iptv-org.github.io/iptv/categories/movies.m3u"),
     "iptv_org_bengali": (SOURCE_IPTV_ORG_BENGALI, "https://iptv-org.github.io/iptv/languages/ben.m3u"),
     "iptv_org_sports": (SOURCE_IPTV_ORG_SPORTS, "https://iptv-org.github.io/iptv/categories/sports.m3u"),
     "iptv_org_bd": (SOURCE_IPTV_ORG_BD, "https://iptv-org.github.io/iptv/countries/bd.m3u"),
@@ -184,6 +186,12 @@ def categorize(channel_name, source_group):
     name = channel_name.lower()
     sg = source_group.lower() if source_group else ""
 
+    # Movies
+    if any(x in name for x in ["movie", "movies", "cinema", "cineplex", "film", "films", "hollywood", "bollywood", "goldmines", "filamchi", "b4u movies", "star gold", "sony max", "zee cinema", "colors cineplex", "shemaroo movies", "dangal movies", "manoranjan movies", "cineworld", "filmrise", "cinevault", "moviesphere", "pluto tv movies"]):
+        return "Movies"
+    if any(x in sg for x in ["movie", "movies", "cinema", "cineplex", "film", "films"]):
+        return "Movies"
+
     # Sports
     if any(x in name for x in ["sports", "cricket", "willow", "bein", "football", "espn", "eurosport", "ten 1", "ten 2", "ten 3", "sony six", "sony ten", "t sports", "t-sports", "gtv", "gazi"]):
         return "Sports"
@@ -195,8 +203,6 @@ def categorize(channel_name, source_group):
         return "Kids"
     if any(x in sg for x in ["kids", "kid", "cartoon", "cartoons"]):
         return "Kids"
-
-    # Religious
     if any(x in name for x in ["peace tv", "quran", "sunnah", "islam", "makkah", "madina", "religious", "bible", "saudi quran"]):
         return "Religious"
     if any(x in sg for x in ["religious", "religion", "islamic", "islam"]):
@@ -426,7 +432,7 @@ def main():
     print(f"Deduplication complete: {len(deduped_channels)} channels retained with {total_backups} total backup failover streams.")
 
     # 5. Sort channels logically by group and alphabetically
-    group_order = ["Bangladesh", "Sports", "Indian Bangla", "Indian", "News", "International", "Religious", "Kids", "Music"]
+    group_order = ["Movies", "Bangladesh", "Sports", "Indian Bangla", "Indian", "News", "International", "Religious", "Kids", "Music"]
     
     def get_sort_key(c):
         g = c["group"]
