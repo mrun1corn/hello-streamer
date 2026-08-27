@@ -17,3 +17,11 @@ Thumbs.db
 
 # Repowise
 .repowise/
+
+# Android & Gradle
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/**/*.iml
