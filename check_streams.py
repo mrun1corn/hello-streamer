@@ -451,7 +451,7 @@ def main():
         print(f"Error saving to channels.json: {e}")
 
     # 7. Save channels.js (Backwards Compatible Store)
-    js_content = "const CHANNELS = [\n"
+    js_content = "window.CHANNELS = [\n"
     last_group = None
     
     for c in clean_channels:
@@ -467,8 +467,7 @@ def main():
 
         js_content += f'  {{ id:{c["id"]:<3}, name:"{name_esc}", group:"{group_esc}", logo:"{logo_esc}", url:"{url_esc}", backups:{backups_json} }},\n'
 
-    js_content += "];\n\n"
-    js_content += "const GROUPS = ['All', ...new Set(CHANNELS.map(c => c.group))];\n"
+    js_content += "window.GROUPS = ['All', ...new Set(window.CHANNELS.map(c => c.group))];\n"
 
     try:
         with open(channels_js_path, "w", encoding="utf-8") as f:

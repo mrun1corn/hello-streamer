@@ -287,8 +287,8 @@
 
 <script>
 /* ── DATA & STATE ──── */
-let CHANNELS = window.CHANNELS || [];
-let GROUPS = window.GROUPS || ['All'];
+let channels = (typeof CHANNELS !== 'undefined' && Array.isArray(CHANNELS)) ? CHANNELS : (window.CHANNELS || []);
+let groups = ['All'];
 let favorites = JSON.parse(localStorage.getItem('hs_favs') || '[]');
 let recent = JSON.parse(localStorage.getItem('hs_recent') || '[]');
 
@@ -312,17 +312,23 @@ async function initData(){
     if(res.ok){
       const data = await res.json();
       if(Array.isArray(data) && data.length > 0){
-        CHANNELS = data;
+        channels = data;
       }
     }
   } catch(e) {
+    if(typeof CHANNELS !== 'undefined' && Array.isArray(CHANNELS)){
+      channels = CHANNELS;
+    }
     console.warn('Could not load channels.json; using fallback CHANNELS script array.', e);
   }
 
-  // Deduplicate and order groups
-  const dynamicGroups = Array.from(new Set(CHANNELS.map(c => c.group).filter(Boolean)));
-  GROUPS = ['All', '⭐ Favorites', '🕒 Recent', ...dynamicGroups];
+  if(!channels.length && typeof CHANNELS !== 'undefined' && Array.isArray(CHANNELS)){
+    channels = CHANNELS;
+  }
 
+  // Deduplicate and order groups
+  const dynamicGroups = Array.from(new Set(channels.map(c => c.group).filter(Boolean)));
+  groups = ['All', '⭐ Favorites', '🕒 Recent', ...dynamicGroups];
   buildTabs();
   renderList();
   updateFooter();
@@ -333,8 +339,9 @@ async function initData(){
 /* ── NOISE EFFECT ──── */
 (function noise(){
   const cv = document.getElementById('static');
-  if(!cv) return;
+  if(!cv || typeof cv.getContext !== 'function') return;
   const cx = cv.getContext('2d');
+  if(!cx) return;
   function draw(){
     const w = cv.width = cv.offsetWidth, h = cv.height = cv.offsetHeight;
     if(w > 0 && h > 0){
@@ -355,7 +362,7 @@ async function initData(){
 function buildTabs(){
   const c = document.getElementById('tabs');
   c.innerHTML = '';
-  GROUPS.forEach(g=>{
+  groups.forEach(g=>{
     const b = document.createElement('button');
     b.className = 'tab' + (g === activeGroup ? ' on' : '') + (g === '⭐ Favorites' ? ' fav-tab' : '');
     b.textContent = g;
@@ -372,11 +379,11 @@ function buildTabs(){
 
 /* ── RENDER LIST (OPTIMIZED) ──── */
 function visible(){
-  let ch = CHANNELS;
+  let ch = channels;
   if(activeGroup === '⭐ Favorites'){
     ch = ch.filter(c => favorites.includes(c.id));
   } else if(activeGroup === '🕒 Recent'){
-    ch = recent.map(id => CHANNELS.find(c => c.id === id)).filter(Boolean);
+    ch = recent.map(id => channels.find(c => c.id === id)).filter(Boolean);
   } else if(activeGroup !== 'All'){
     ch = ch.filter(c => c.group === activeGroup);
   }
@@ -445,8 +452,8 @@ function renderList(){
 
 function updateFooter(){
   const v = visible();
-  document.getElementById('sb-footer').textContent = `${v.length} of ${CHANNELS.length} channels`;
-  document.getElementById('ch-count-badge').textContent = `${CHANNELS.length} channels`;
+  document.getElementById('sb-footer').textContent = `${v.length} of ${channels.length} channels`;
+  document.getElementById('ch-count-badge').textContent = `${channels.length} channels`;
 }
 
 /* ── SEARCH / FILTER ──── */
@@ -478,7 +485,7 @@ function resetFilters(){
 
 /* ── PLAYBACK & AUTO-FAILOVER ──── */
 function play(id, backupIndex = 0){
-  const ch = CHANNELS.find(c => c.id === id);
+  const ch = channels.find(c => c.id === id);
   if(!ch) return;
   
   currentIdx = id;
@@ -552,7 +559,7 @@ function startStream(url){
   // Mixed Content Guard with graceful fallback to HTTPS backups if available
   if(url.startsWith('http://') && window.location.protocol === 'https:'){
     console.warn('Insecure HTTP stream on HTTPS page:', url);
-    const ch = CHANNELS.find(c => c.id === currentIdx);
+    const ch = channels.find(c => c.id === currentIdx);
     const allUrls = ch ? [ch.url, ...(ch.backups || [])] : [];
     
     // Check if there is an HTTPS backup stream available
@@ -674,7 +681,7 @@ function changeQuality(levelIdx){
 }
 
 function handleStreamFailure(reason){
-  const ch = CHANNELS.find(c => c.id === currentIdx);
+  const ch = channels.find(c => c.id === currentIdx);
   const allUrls = ch ? [ch.url, ...(ch.backups || [])].filter(Boolean) : [];
 
   // If backup URLs exist, automatically failover
@@ -770,7 +777,7 @@ function showErr(msg, isDirectMessage = false){
   const suffix = isDirectMessage ? '' : ' — Stream may be offline or geoblocked. Try another channel.';
   document.getElementById('err-msg').textContent = msg + suffix;
   
-  const ch = CHANNELS.find(c => c.id === currentIdx);
+  const ch = channels.find(c => c.id === currentIdx);
   const allUrls = ch ? [ch.url, ...(ch.backups || [])].filter(Boolean) : [];
   const hasMoreBackups = ch && (currentBackupIdx + 1 < allUrls.length);
 

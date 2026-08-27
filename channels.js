@@ -1,4 +1,4 @@
-const CHANNELS = [
+window.CHANNELS = [
 
   // ── BANGLADESH ────────────────────────────────
   { id:1  , name:"Aamar Bangla (720p)", group:"Bangladesh", logo:"https://jiotvimages.cdn.jio.com/dare_images/images/Amaar_Bangla.png", url:"https://app.ncare.live/c3VydmVyX8RpbEU9Mi8xNy8yMDE0GIDU6RgzQ6NTAgdEoaeFzbF92YWxIZTO0U0ezN1IzMyfvcGVMZEJCTEFWeVN3PTOmdFsaWRtaW51aiPhnPTI/amarbanglatv.stream/playlist.m3u8", backups:[] },
@@ -945,4 +945,4 @@ const CHANNELS = [
   { id:926, name:"Ócko STAR", group:"Music", logo:"https://pbs.twimg.com/profile_images/3055217408/a5421a501ccfcc705c5ea69ff102b097_400x400.png", url:"https://ocko-live.ssl.cdn.cra.cz/channels/ocko_gold/playlist/cze/live_lq.m3u8", backups:[] },
 ];
 
-const GROUPS = ['All', ...new Set(CHANNELS.map(c => c.group))];
+window.GROUPS = ['All', ...new Set(window.CHANNELS.map(c => c.group))];
