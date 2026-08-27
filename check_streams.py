@@ -290,15 +290,16 @@ def probe_url(url, timeout=4):
     except Exception as e:
         return False, f"Error: {str(e)}", url
 
-def check_stream(channel, timeout=4):
+def check_stream(channel, timeout=4, https_only=True):
     """
     Checks if a channel stream URL is working.
     Attempts HTTPS upgrade automatically if the stream is HTTP.
+    Enforces HTTPS-only compliance to prevent browser mixed-content errors on HTTPS hosts.
     Returns (channel, is_working, error_message)
     """
     original_url = channel["url"]
     
-    # 1. If URL is HTTP, try upgrading to HTTPS first to avoid mixed-content blocks
+    # 1. If URL is HTTP, try upgrading to HTTPS first
     if original_url.startswith("http://"):
         https_url = "https://" + original_url[7:]
         ok, msg, final_url = probe_url(https_url, timeout=timeout)
@@ -306,8 +307,13 @@ def check_stream(channel, timeout=4):
             channel_copy = dict(channel)
             channel_copy["url"] = final_url
             return channel_copy, True, "OK (Upgraded to HTTPS)"
+        if https_only:
+            return channel, False, "Insecure HTTP stream (failed HTTPS upgrade)"
     
-    # 2. Probe the configured URL
+    # 2. Probe the configured HTTPS URL
+    if not original_url.startswith("https://") and https_only:
+        return channel, False, "Insecure HTTP stream"
+
     ok, msg, final_url = probe_url(original_url, timeout=timeout)
     if ok:
         channel_copy = dict(channel)
@@ -315,7 +321,6 @@ def check_stream(channel, timeout=4):
         return channel_copy, True, msg
     
     return channel, False, msg
-
 def main():
     workspace_dir = os.path.dirname(os.path.abspath(__file__))
     channels_json_path = os.path.join(workspace_dir, "channels.json")
